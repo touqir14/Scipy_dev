@@ -8,6 +8,8 @@ from numpy.linalg import matrix_rank
 import scipy.sparse
 import pickle
 import copy
+from pathlib import Path
+import sys
 
 
 def load_matrix(fileName):
@@ -65,14 +67,29 @@ def import_fileNames(fileName, base_location):
 
     return fileList, fileList_original
 
+def validate_fileNames(fileList, extension=False):
+    incorrect_paths = []
+    all_clear = True
+    for file in fileList:
+        path = Path(file + extension)
+        if not path.is_file(): 
+            incorrect_paths.append(str(path))
+            all_clear = False
 
-fileName = "MatrixNames.txt"
-base_location = 'C:\Home\data\Singular Matrices'
-save_location = 'C:\Home\Coding\Scipy_dev\LP_presolve\performances'
+    return all_clear, incorrect_paths
 
 
 def measure_performance():
     files, filenames = import_fileNames(fileName, base_location)
+    all_clear, incorrect_paths = validate_fileNames(files, extension='.mat')
+    
+    if not all_clear:
+        print("The paths below are not valid!:")
+        for path in incorrect_paths:
+            print(path)
+        print("Exiting..")
+        sys.exit()
+    
     performance_dict = {}
     for file, filename in zip(files, filenames):
         performance_dict[filename] = []            
@@ -114,6 +131,15 @@ def save_file(data, path):
 
 
 if __name__ == "__main__":
+
+    # Name of the file containing a list of matrix names (by default located in the same directory.. ** Can be changed **)
+    fileName = "MatrixNames.txt" 
+    # path to the directory containin the matrices
+    base_location = 'C:\Home\data\Singular Matrices' 
+    # path of the file where the benchmarks will be saved
+    save_location = 'C:\Home\Coding\Scipy_dev\LP_presolve\performances' 
+
+
     benchmark = measure_performance()
-    print(benchmark)
+    # print(benchmark)
     save_file(benchmark, save_location)
