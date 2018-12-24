@@ -3,7 +3,10 @@ import random
 import time
 from scipy.sparse import random as sparse_random
 from scipy import stats
-
+import rref
+import scipy.linalg.interpolative as ID
+from scipy.linalg import qr
+# import rref_cy.rref_cy as rref
 
 def _build_magical_graph(num_nodes_X, num_groups_Y):
     """
@@ -90,6 +93,7 @@ def _build_magical_graph(num_nodes_X, num_groups_Y):
             num_group_edges[idx_row] = idx_col
             idx_col = 0
 
+    # print(Y_edges)
     return Y_edges, num_group_edges
 
 
@@ -261,10 +265,11 @@ def _build_matrix_rank_k(row, col, k):
 
     # a = np.random.rand(row, col)
     a = np.random.uniform(low=-1000, high=1000, size=(row, col))
+    # a = np.random.uniform(low=-10, high=10, size=(row, col))
     # a = np.random.uniform(low=-20, high=20, size=(row, col))
 
-    # rvs = stats.uniform(loc=-10000, scale=20000).rvs
-    # a = sparse_random(row, col, density=0.05, data_rvs=rvs).A
+    # rvs = stats.uniform(loc=-10, scale=20).rvs
+    # a = sparse_random(row, col, density=0.0001, data_rvs=rvs).A
 
     u, s, vh = np.linalg.svd(a, full_matrices=True)
     smat = np.zeros((row, col))
@@ -297,12 +302,14 @@ def _hash_columns(total_columns, k):
     """
 
     extra_columns = k - (total_columns % k)
+    if extra_columns == k:
+        extra_columns = 0
     toAdd = random.sample(range(total_columns), extra_columns)
     hash_array = np.array(list(range(total_columns)) + toAdd)
     return hash_array
 
 
-def _matrix_compressor(A, K):
+def _matrix_compressor(A, K, gen_neighbours=False, info_dict=None):
     """
     For compressing input matrix A of shape=(m,n) to matrix B of shape(m,k) such that
     min(rank(A),K) = min(rank(B),K)
@@ -325,26 +332,43 @@ def _matrix_compressor(A, K):
     """
 
     # F_set = set(A.flat) # Elements of the field (F)
+    # t1 = time.time()
+    # t0 = t1
     F_set = range(1, 100)
     hash_array = _hash_columns(A.shape[1], K)
     graph, num_edges = _build_magical_graph(hash_array.shape[0], K)
-    
     # Vector of random c values
     C = np.array(random.choices(list(F_set), k=num_edges.sum()))
     B = np.zeros((A.shape[0], K))
+    # print(-1, time.time() - t1)
+
+    if gen_neighbours: 
+        num_edge = num_edges[0]
+        info_dict['neighbours'] = np.zeros((K, num_edge), dtype=int)
 
     c_idx = 0
     for i in range(B.shape[1]):
         num_edge = num_edges[i]
         if num_edge > 0:
+            # t1 = time.time()
             idxs_col = graph[i, 0:num_edge]
             idxs_col = hash_array[idxs_col]
-            
+            # print(-2, time.time() - t1)
             # B[:,i] is the random linear combination of the collumns of A
             # based on C values.
+            # t1 = time.time()
             B[:, i] = A[:, idxs_col].dot(C[c_idx:c_idx + num_edge])
             c_idx += num_edge
+            # print(-3, time.time() - t1)
 
+            # t1 = time.time()
+            if gen_neighbours: info_dict['neighbours'][i,:] = idxs_col
+            # print(-3, time.time() - t1)            
+            # T = T.union(set(idxs_col.flat))
+            # print("For ", i,"th collumn in B, A collumns: ", idxs_col)
+
+    # print(len(T))
+    # print(-4, time.time() - t0)
     return B
 
 
@@ -399,7 +423,7 @@ def compute_rank(A):
 
 def auto_compress_matrix(A):
     """
-    Denoting r = rank(A), it compresses A into B of with r collumns such that rank(B) = r.
+    Denoting r = rank(A), it compresses A into B with r collumns such that rank(B) = r.
 
     Parameters
     ----------
@@ -538,6 +562,10 @@ def test_matrix_compressor(
             for run in range(num_runs):
                 A = _build_matrix_rank_k(A_shape[0], A_shape[1], rank)
                 B = _matrix_compressor(A, k)
+                # print("total entries of A: ", A.shape[0]*A.shape[1])
+                # print("total entries of B: ", B.shape[0]*B.shape[1])
+                # print("Number of non_zeros for A:",np.count_nonzero(A))
+                # print("Number of non zeros for B:",np.count_nonzero(B))
                 rank_B = np.linalg.matrix_rank(B)
 
                 if logs:
@@ -615,6 +643,8 @@ def test_auto_compress_matrix(
                     "B cols:", B.shape[1],
                     "num_run:", run + 1
                     )
+                print("RREF of A.T :", compute_rref(A.T))
+                print("RREF of B.T :", compute_rref(B.T))
 
             if (rank == B_rank) and (rank == B.shape[1]):
                 results[run, rank - rank_range[0]] = 1
@@ -626,11 +656,288 @@ def test_auto_compress_matrix(
     return
 
 
+def test_RREF(
+        rank_range,
+        A_shape,
+        num_runs,
+        accept_threshold=False,
+        logs=False):
+    """
+    Function similar to test_compute_rank for testing auto_compress_matrix function whether the compressed matrix B
+    is of shape (m,r) with rank(B) = r, where r = rank(A) for every enumeration (See test_compute_rank).
+
+    Parameters
+    ----------
+
+    k_range : (list)
+    Composed of two elements such that 1st denotes the starting point of a range of k values
+    and the 2nd denotes the upper limit of that range. k corresponds to the number of columns of B (Compressed matrix)
+
+    rank_range : (list)
+    See test_compute_rank
+
+    A_shape : (list)
+    A_shape = A.shape
+
+    num_runs : (list)
+    See test_compute_rank.
+
+    accept_threshold : (Boolean/float)
+    See test_compute_rank.
+
+    logs : (Boolean)
+    See test_compute_rank.
+
+    Returns
+    -------
+
+    None
+    """
+
+    print("Running test_RREF ...")
+
+    results = np.zeros(
+        (num_runs, rank_range[1] - rank_range[0] + 1),
+        dtype=int)
+
+    for rank in range(rank_range[0], rank_range[1] + 1):
+        for run in range(num_runs):
+            A = _build_matrix_rank_k(A_shape[0], A_shape[1], rank)
+            B = auto_compress_matrix(A)
+            B_rank = np.linalg.matrix_rank(B)
+
+            A_rref, A_rank = compute_rref(A.T)
+            B_rref, B_rank = compute_rref(B.T)
+
+            if logs:
+                print(
+                    "A rank:", rank,
+                    ". B rank:", B_rank,
+                    "B cols:", B.shape[1],
+                    "num_run:", run + 1
+                    )
+                print("RREF of A.T : \n", A_rref)
+                print("RREF of B.T : \n", B_rref)
+
+            if A_rank != rank: print("Wrong RREF for A.T")
+            if B_rank != B_rank : print("Wrong RREF for B.T")
+
+            if np.allclose(A_rref[:rank,:], B_rref, atol=1e-5, rtol=0):
+                results[run, rank - rank_range[0]] = 1
+            else:
+                print("Not same RREF for rank: ",rank)
+
+            # if np.allclose(A_rref[:rank,:], B_rref, atol=1e-03, rtol=0) or (A_rank != rank or B_rank != B_rank):
+            #     results[run, rank - rank_range[0]] = 1
+            # else:
+            #     print("RREF of A.T : \n", A_rref, "\n rank of A_rref:", A_rank)
+            #     print("RREF of B.T : \n", B_rref, "\n rank of B_rref:", B_rank)
+
+
+    success_percent = results.mean() * 100
+    print("(From test_RREF) Success %: ", success_percent)
+    if accept_threshold is not False:
+        assert(success_percent >= accept_threshold)
+    return
+
+
+def compute_rref(A):
+
+    M = rref.rref(A)
+    M_array = M[0]
+    # M_rank = M[1].shape[0]
+    M_rank = len(M[1])
+    return M_array, M_rank
+
+
+def _extract_independent_columns(A, rank):
+    if rank == 'randomized_rank':
+        rank = compute_rank(A)
+    elif rank == 'exact_rank':
+        rank = exact_rank(A, eps=10**-5)
+
+    col_idxs,_ = ID.interp_decomp(A, eps_or_k=rank, rand=True)
+
+    return col_idxs[:rank]
+
+def exact_rank(A, eps=10**-6):
+    R = qr(A, mode='r', pivoting=True, check_finite=False)
+    rank = 0
+    for i in range(min(R[0].shape)):
+        rank += 1
+        if abs(R[0][i,i]) < eps:
+            return i
+    return rank
+    # return ID.estimate_rank(A, eps=10**-3)
+
+def compute_independent_columns(A, c=4, k=None):
+
+    # t1 = time.time()
+    if k is None: k = compute_rank(A)
+    # print(1, time.time() - t1)
+
+    # t1 = time.time()
+    A_reduced = _matrix_compressor(A.T, k).T
+    # print(2, time.time() - t1)
+
+    A_prime = A_reduced
+    info_dict = {}
+    T = list(range(A.shape[1]))
+    i = 0
+
+    while True:
+        if c*k >= A_prime.shape[1]:
+            # t1 = time.time()
+            independent_columns = [T[i] for i in _extract_independent_columns(A_prime, k)]
+            # print(3, time.time() - t1)
+            return A[:, independent_columns], independent_columns
+
+        # t1 = time.time()
+        B = _matrix_compressor(A_prime, c*k, gen_neighbours=True, info_dict=info_dict)
+        S = _extract_independent_columns(B, k)
+        T = [T[i] for i in list(set(info_dict['neighbours'][S, :].flat))]
+        A_prime = A_reduced[:, T]
+        # print(B.shape, A_prime.shape, i, time.time() - t1)
+        i +=1
+
+def _build_matrix_rank_k_FAST(rows, cols, rank, really_fast=False):
+
+    A = np.random.normal(size=(rows, cols))
+    if rank >= min(cols, rows):
+        return A
+    else:
+        if really_fast:
+            # A[:, rank:] = A[:, 0].reshape(A.shape[0], 1)            
+            rank -= 1
+            A[:, rank:] = 1.1            
+        else:
+            for i in range(rank, cols):
+                A[:, i] = A[:, :rank].dot(np.random.normal(size=(rank)))
+
+    return A
+    # t1 = time.time()
+    # computed_rank = exact_rank(A, eps=10**-5)
+    # print("Target rank: ", rank, " rank of A: ", computed_rank, "time took: ", time.time() - t1)
+    # print("Target rank: ", rank, " rank of A: ", np.linalg.matrix_rank(A))
+
+
+def test_compute_independent_columns(
+        rank_range,
+        A_shape,
+        num_runs,
+        accept_threshold=False,
+        logs=False):
+
+    print("Running test_compute_independent_columns ...")
+
+    results = np.zeros(
+        (num_runs, rank_range[1] - rank_range[0] + 1),
+        dtype=int)
+
+    time_spent_1 = np.zeros(
+        (num_runs, rank_range[1] - rank_range[0] + 1))
+
+    time_spent_2 = np.zeros(
+        (num_runs, rank_range[1] - rank_range[0] + 1))
+
+    for rank in range(rank_range[0], rank_range[1] + 1):
+        for run in range(num_runs):
+            correct = False
+            # A = _build_matrix_rank_k(A_shape[0], A_shape[1], rank)
+            A = _build_matrix_rank_k_FAST(A_shape[0], A_shape[1], rank, really_fast=False)
+           
+            t1 = time.time()
+            cols2 = _extract_independent_columns(A, rank=rank)
+            time_spent_2[run, rank - rank_range[0]] = time.time() - t1
+
+            t1 = time.time()
+            _, cols1 = compute_independent_columns(A, k=rank)
+            time_spent_1[run, rank - rank_range[0]] = time.time() - t1
+                      
+            rank_cols1 = exact_rank(A[:, cols1])
+            rank_cols2 = exact_rank(A[:, cols2])
+            # rank_cols2 = rank_cols1
+
+            if (rank_cols1 == rank) and (rank_cols2 == rank):
+                correct = True
+
+            if logs:
+                print("Run: ",run, " Ranks: ", rank, rank_cols1, rank_cols2)
+                print("time taken for compute_independent_columns function:", time_spent_1[run, rank - rank_range[0]])
+                print("time taken for _extract_independent_columns function:", time_spent_2[run, rank - rank_range[0]])
+                if not correct:
+                    print("Rank from compute_independent_columns:", rank_cols1)
+                    print("Rank from _extract_independent_columns:", rank_cols2)
+
+            results[run, rank - rank_range[0]] = correct
+
+    success_percent = results.mean() * 100
+    print("(From test_auto_compress_matrix) Success %: ", success_percent)
+    print("Average time taken for compute_independent_columns function: ", time_spent_1.mean())
+    print("Average time taken for _extract_independent_columns function: ", time_spent_2.mean())
+
+    if accept_threshold is not False:
+        assert(success_percent >= accept_threshold)
+    return
+
+
+
 if __name__ == "__main__":
 
     random.seed(int(time.time()))
     np.random.seed(int(time.time()))
 
-    test_matrix_compressor([1, 30], [1, 30], [30, 50], 100, logs=False)
-    test_compute_rank([1, 30], [30, 50], 100, logs=False)
-    test_auto_compress_matrix([1, 30], [30, 50], 100, logs=False)
+    # test_matrix_compressor([3, 3], [3, 3], [6, 6], 1, logs=False)
+
+    # test_matrix_compressor([1, 30], [1, 30], [30, 50], 10, logs=False)
+    # test_compute_rank([1, 30], [30, 50], 100, logs=False)
+    # test_auto_compress_matrix([1, 30], [30, 50], 5, logs=False)
+
+    # test_auto_compress_matrix([1, 3], [3, 5], 5, logs=True)
+    # test_RREF([1, 30], [30, 50], 100, logs=False)
+
+
+    # k = 10
+    # A = _build_matrix_rank_k(100,100, k)
+    # A = _build_matrix_rank_k(10,10, 10).astype(dtype=np.double)
+    
+    # t1 = time.time()
+    # compute_rref(A)
+    # print(time.time() - t1)
+
+    # r = np.random.rand(10000,1)
+    # A = np.random.rand(10000,10000) 
+    # t1 = time.time()
+    # A.dot(r)
+    # A.dot(r)
+    # A.dot(r)
+    # print(time.time() - t1)
+
+
+    # t1 = time.time()
+    # info_dict = {}
+    # _ = _matrix_compressor(A, 4*k, gen_neighbours=True, info_dict=info_dict)
+    # print(time.time() - t1)
+    # print(info_dict['neighbours'])
+
+    # t1 = time.time()    
+    # _ =  auto_compress_matrix(A)
+    # print(time.time() - t1)
+
+    # t1 = time.time()    
+    # _ =  compute_rank(A)
+    # print(time.time() - t1)
+
+    # t1 = time.time()    
+    # _ =  np.linalg.matrix_rank(A)
+    # print(time.time() - t1)
+
+
+    # _build_matrix_rank_k_FAST(100,100,32)
+    # _build_matrix_rank_k_FAST(100,100,2)
+    # _build_matrix_rank_k_FAST(10,100,5)
+    # _build_matrix_rank_k_FAST(100,10,5)
+    # _build_matrix_rank_k_FAST(100000,1000,100)
+
+    test_compute_independent_columns([10, 10], [1000, 1000], 1, logs=True)
+    # test_compute_independent_columns([50, 50], [1000000, 100], 1, logs=True)
