@@ -141,6 +141,12 @@ if __name__ == "__main__":
 
 
     # fileName = input("Type in the MatrixName file: ")
+    if len(sys.argv) == 2:    
+        fileName = sys.argv[1]
+    elif len(sys.argv) == 3:
+        fileName = sys.argv[1]
+        save_location = sys.argv[2]
+        
     benchmark = measure_performance()
     # print(benchmark)
     save_file(benchmark, save_location)
