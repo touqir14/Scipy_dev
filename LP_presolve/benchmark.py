@@ -140,6 +140,7 @@ if __name__ == "__main__":
     save_location = 'C:\Home\Coding\Scipy_dev\LP_presolve\performances' 
 
 
+    # fileName = input("Type in the MatrixName file: ")
     benchmark = measure_performance()
     # print(benchmark)
     save_file(benchmark, save_location)
