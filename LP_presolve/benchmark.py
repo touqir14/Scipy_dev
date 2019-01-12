@@ -44,11 +44,11 @@ def load_matrix(fileName):
 
 
 def remove_redundancy_ID(A, rank):
-    # cols = extract_independent_columns_ID(A, rank=rank)
-    # A_new = A[:,cols]
+    cols = extract_independent_columns_ID(A, rank=rank)
+    A_new = A[:,cols]
 
-    rows = extract_independent_rows_ID(A, rank=rank)
-    A_new = A[:,rows]
+    # rows = extract_independent_rows_ID(A, rank=rank)
+    # A_new = A[:,rows]
 
     rank_new = matrix_rank(A_new)
     print("remove_redundancy_ID: ", rank_new == rank, rank_new, rank)
@@ -59,8 +59,8 @@ def remove_redundancy_ID(A, rank):
 
 
 def remove_redundancy_hybrid_ID(A, rank):
-    # A_new, cols = extract_independent_columns_hybrid_ID(A, k=rank)
-    A_new, rows = extract_independent_rows_hybrid_ID(A, k=rank)
+    A_new, cols = extract_independent_columns_hybrid_ID(A, k=rank)
+    # A_new, rows = extract_independent_rows_hybrid_ID(A, k=rank)
 
     rank_new = matrix_rank(A_new)
     print("remove_redundancy_hybrid_ID: ", rank_new == rank, rank_new, rank)
