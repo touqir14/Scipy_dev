@@ -750,7 +750,7 @@ def compute_rref(A):
     return M_array, M_rank
 
 
-def _extract_independent_columns(A, rank):
+def extract_independent_columns_ID(A, rank):
     if rank == 'randomized_rank':
         rank = compute_rank(A)
     elif rank == 'exact_rank':
@@ -759,6 +759,9 @@ def _extract_independent_columns(A, rank):
     col_idxs,_ = ID.interp_decomp(A, eps_or_k=rank, rand=True)
 
     return col_idxs[:rank]
+
+def extract_independent_rows_ID(A, rank):
+    return extract_independent_columns_ID(A.T, rank)
 
 def exact_rank(A, eps=10**-6):
     R = qr(A, mode='r', pivoting=True, check_finite=False)
@@ -770,7 +773,7 @@ def exact_rank(A, eps=10**-6):
     return rank
     # return ID.estimate_rank(A, eps=10**-3)
 
-def compute_independent_columns(A, c=4, k=None):
+def extract_independent_columns_hybrid_ID(A, c=4, k=None):
 
     # t1 = time.time()
     if k is None: k = compute_rank(A)
@@ -788,17 +791,20 @@ def compute_independent_columns(A, c=4, k=None):
     while True:
         if c*k >= A_prime.shape[1]:
             # t1 = time.time()
-            independent_columns = [T[i] for i in _extract_independent_columns(A_prime, k)]
+            independent_columns = [T[i] for i in extract_independent_columns_ID(A_prime, k)]
             # print(3, time.time() - t1)
             return A[:, independent_columns], independent_columns
 
         # t1 = time.time()
         B = _matrix_compressor(A_prime, c*k, gen_neighbours=True, info_dict=info_dict)
-        S = _extract_independent_columns(B, k)
+        S = extract_independent_columns_ID(B, k)
         T = [T[i] for i in list(set(info_dict['neighbours'][S, :].flat))]
         A_prime = A_reduced[:, T]
         # print(B.shape, A_prime.shape, i, time.time() - t1)
         i +=1
+
+def extract_independent_rows_hybrid_ID(A,c=4,k=None):
+    return extract_independent_columns_hybrid_ID(A.T, c, k)
 
 def _build_matrix_rank_k_FAST(rows, cols, rank, really_fast=False):
 
@@ -821,14 +827,14 @@ def _build_matrix_rank_k_FAST(rows, cols, rank, really_fast=False):
     # print("Target rank: ", rank, " rank of A: ", np.linalg.matrix_rank(A))
 
 
-def test_compute_independent_columns(
+def test_extract_independent_columns_hybrid_ID(
         rank_range,
         A_shape,
         num_runs,
         accept_threshold=False,
         logs=False):
 
-    print("Running test_compute_independent_columns ...")
+    print("Running test_extract_independent_columns_hybrid_ID ...")
 
     results = np.zeros(
         (num_runs, rank_range[1] - rank_range[0] + 1),
@@ -847,11 +853,11 @@ def test_compute_independent_columns(
             A = _build_matrix_rank_k_FAST(A_shape[0], A_shape[1], rank, really_fast=False)
            
             t1 = time.time()
-            cols2 = _extract_independent_columns(A, rank=rank)
+            cols2 = extract_independent_columns_ID(A, rank=rank)
             time_spent_2[run, rank - rank_range[0]] = time.time() - t1
 
             t1 = time.time()
-            _, cols1 = compute_independent_columns(A, k=rank)
+            _, cols1 = extract_independent_columns_hybrid_ID(A, k=rank)
             time_spent_1[run, rank - rank_range[0]] = time.time() - t1
                       
             rank_cols1 = exact_rank(A[:, cols1])
@@ -863,18 +869,18 @@ def test_compute_independent_columns(
 
             if logs:
                 print("Run: ",run, " Ranks: ", rank, rank_cols1, rank_cols2)
-                print("time taken for compute_independent_columns function:", time_spent_1[run, rank - rank_range[0]])
-                print("time taken for _extract_independent_columns function:", time_spent_2[run, rank - rank_range[0]])
+                print("time taken for extract_independent_columns_hybrid_ID function:", time_spent_1[run, rank - rank_range[0]])
+                print("time taken for extract_independent_columns_ID function:", time_spent_2[run, rank - rank_range[0]])
                 if not correct:
-                    print("Rank from compute_independent_columns:", rank_cols1)
-                    print("Rank from _extract_independent_columns:", rank_cols2)
+                    print("Rank from extract_independent_columns_hybrid_ID:", rank_cols1)
+                    print("Rank from extract_independent_columns_ID:", rank_cols2)
 
             results[run, rank - rank_range[0]] = correct
 
     success_percent = results.mean() * 100
     print("(From test_auto_compress_matrix) Success %: ", success_percent)
-    print("Average time taken for compute_independent_columns function: ", time_spent_1.mean())
-    print("Average time taken for _extract_independent_columns function: ", time_spent_2.mean())
+    print("Average time taken for extract_independent_columns_hybrid_ID function: ", time_spent_1.mean())
+    print("Average time taken for extract_independent_columns_ID function: ", time_spent_2.mean())
 
     if accept_threshold is not False:
         assert(success_percent >= accept_threshold)
@@ -939,5 +945,5 @@ if __name__ == "__main__":
     # _build_matrix_rank_k_FAST(100,10,5)
     # _build_matrix_rank_k_FAST(100000,1000,100)
 
-    test_compute_independent_columns([10, 10], [1000, 1000], 1, logs=True)
-    # test_compute_independent_columns([50, 50], [1000000, 100], 1, logs=True)
+    test_extract_independent_columns_hybrid_ID([10, 10], [1000, 1000], 1, logs=True)
+    # test_extract_independent_columns_hybrid_ID([50, 50], [1000000, 100], 1, logs=True)
